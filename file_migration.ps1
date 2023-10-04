@@ -16,9 +16,14 @@ param(
 # Map Network Drive
 net use $DriveLetter $NetworkPath
 
+# Function to replace drive letter with mapped drive
+function ConvertToMappedPath($path) {
+    return $path -replace "^[A-Z]:", $DriveLetter
+}
+
 # Create Directories and set ACL
 Import-Csv $DirectoriesCsv | ForEach-Object {
-    $directory = $_.DirectoryPath
+    $directory = ConvertToMappedPath($_.DirectoryPath)
 
     # Create directory
     New-Item -Path $directory -ItemType Directory
@@ -44,7 +49,7 @@ Import-Csv $DirectoriesCsv | ForEach-Object {
 # Move Files and set ACL
 Import-Csv $FilesCsv | ForEach-Object {
     $source = $_.SourcePath
-    $destination = $_.DestinationPath
+    $destination = ConvertToMappedPath($_.DestinationPath)
 
     # Move file
     Move-Item -Path $source -Destination $destination
