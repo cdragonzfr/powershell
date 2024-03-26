@@ -1,0 +1,23 @@
+# Using Get-ItemProperty for querying installed programs from the registry, avoiding Get-WmiObject -Class Win32_Product due to its resource intensity.
+# This approach queries the Uninstall registry key where installed programs are listed.
+
+$service = Get-Service -Name SplunkForwarder -ErrorAction SilentlyContinue
+
+if ($service) {
+    # Define registry paths for both 32-bit and 64-bit applications
+    $paths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    # Loop through each registry path to find the UniversalForwarder
+    foreach ($path in $paths) {
+        $result = Get-ItemProperty $path | Where-Object { $_.DisplayName -eq "UniversalForwarder" } | Select-Object -ExpandProperty DisplayVersion
+        if ($result) { break } # If the UniversalForwarder is found, break the loop to avoid unnecessary processing
+    }
+
+    # Output the version of the UniversalForwarder, if found
+    $result
+} else {
+    Write-Output "SplunkForwarder service not found."
+}
