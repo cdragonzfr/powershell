@@ -1,0 +1,109 @@
+# Define log file location
+$LogFile = "C:\Temp\token_placement.log"
+"===== Script Started: $(Get-Date) =====" | Out-File -FilePath $LogFile -Append
+
+# Function to log messages
+function Log {
+    param ($Message)
+    "$((Get-Date).ToString()) - $Message" | Tee-Object -FilePath $LogFile -Append
+}
+
+# Check PowerShell version (Exit if below 5.0)
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Log "ERROR: PowerShell version is below 5.0 (Detected: $($PSVersionTable.PSVersion)). Exiting script."
+    exit 1
+}
+
+Log "PowerShell version is $($PSVersionTable.PSVersion). Proceeding with script."
+
+# Find the .zip file in the current directory
+$ZipFile = Get-ChildItem -Path . -Filter "*.zip" | Select-Object -First 1
+
+if (-not $ZipFile) {
+    Log "ERROR: No .zip file found in the current directory."
+    exit 1
+}
+
+Log "Found zip file: $($ZipFile.Name)"
+
+# Extract the zip file
+$ExtractPath = Join-Path -Path (Get-Location) -ChildPath "ExtractedContents"
+if (!(Test-Path $ExtractPath)) {
+    New-Item -ItemType Directory -Path $ExtractPath | Out-Null
+}
+
+Log "Extracting $($ZipFile.Name) to $ExtractPath..."
+Expand-Archive -Path $ZipFile.FullName -DestinationPath $ExtractPath -Force 2>> $LogFile
+if ($LASTEXITCODE -ne 0) {
+    Log "ERROR: Extraction failed."
+    exit 1
+}
+
+Log "Extraction successful."
+
+# Identify CSV file in the extracted folder
+$CsvFile = Get-ChildItem -Path $ExtractPath -Filter "*.csv" | Select-Object -First 1
+
+if (-not $CsvFile) {
+    Log "ERROR: No CSV file found in the extracted contents."
+    exit 1
+}
+
+Log "Found CSV file: $($CsvFile.Name)"
+
+# Process the CSV file
+Import-Csv -Path $CsvFile.FullName | ForEach-Object {
+    $TargetPath = $_.target_path -replace "`r", ""
+    $TokenName = $_.token_name -replace "`r", ""
+    $Owner = $_.owner -replace "`r", ""
+    $Permissions = $_.permissions -replace "`r", ""
+
+    Log "Processing token: $TokenName"
+
+    # Check if token exists
+    $TokenPath = Join-Path -Path $ExtractPath -ChildPath $TokenName
+    if (-not (Test-Path $TokenPath -PathType Leaf)) {
+        Log "ERROR: Token $TokenName not found in extracted directory."
+        return
+    }
+
+    # Change owner
+    Log "Setting owner: $Owner for $TokenName"
+    icacls $TokenPath /setowner $Owner /T /C >> $LogFile 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Log "ERROR: Failed to change owner for $TokenName"
+        return
+    }
+
+    # Change permissions
+    Log "Setting permissions: $Permissions for $TokenName"
+    icacls $TokenPath /grant "$Owner:($Permissions)" /T /C >> $LogFile 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Log "ERROR: Failed to change permissions for $TokenName"
+        return
+    }
+
+    # Move token to the target path
+    Log "Moving $TokenName to $TargetPath"
+    if (-not (Test-Path $TargetPath -PathType Container)) {
+        Log "Creating directory: $TargetPath"
+        New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+    }
+
+    Move-Item -Path $TokenPath -Destination $TargetPath -Force -ErrorAction SilentlyContinue
+    if ($LASTEXITCODE -ne 0) {
+        Log "ERROR: Failed to move $TokenName to $TargetPath"
+        return
+    }
+
+    # Verify token placement
+    $MovedTokenPath = Join-Path -Path $TargetPath -ChildPath $TokenName
+    if (Test-Path $MovedTokenPath -PathType Leaf) {
+        Log "Verification successful: $TokenName is in $TargetPath"
+        icacls $MovedTokenPath >> $LogFile 2>&1
+    } else {
+        Log "ERROR: Verification failed for $TokenName"
+    }
+}
+
+Log "===== Script Completed: $(Get-Date) ====="
