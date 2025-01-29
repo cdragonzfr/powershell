@@ -27,19 +27,20 @@ if (-not $ZipFile) {
 Log "Found zip file: $($ZipFile.Name)"
 
 # Extract the zip file
-$ExtractPath = Join-Path -Path (Get-Location) -ChildPath "ExtractedContents"
+$ExtractPath = Join-Path -Path (Get-Location) -ChildPath .
 if (!(Test-Path $ExtractPath)) {
     New-Item -ItemType Directory -Path $ExtractPath | Out-Null
 }
 
 Log "Extracting $($ZipFile.Name) to $ExtractPath..."
-Expand-Archive -Path $ZipFile.FullName -DestinationPath $ExtractPath -Force 2>> $LogFile
-if ($LASTEXITCODE -ne 0) {
+
+try {
+    Expand-Archive -Path $ZipFile.FullName -DestinationPath $ExtractPath -Force -ErrorAction Stop
+    Log "Extraction successful."
+} catch {
     Log "ERROR: Extraction failed."
     exit 1
 }
-
-Log "Extraction successful."
 
 # Identify CSV file in the extracted folder
 $CsvFile = Get-ChildItem -Path $ExtractPath -Filter "*.csv" | Select-Object -First 1
@@ -75,8 +76,10 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
     }
 
     $DestinationFile = Join-Path -Path $TargetPath -ChildPath $TokenName
-    Move-Item -Path $TokenPath -Destination $DestinationFile -Force -ErrorAction SilentlyContinue
-    if ($LASTEXITCODE -ne 0) {
+    try {
+        Move-Item -Path $TokenPath -Destination $DestinationFile -Force -ErrorAction SilentlyContinue
+        Log "Move Successful"
+    } catch {
         Log "ERROR: Failed to move $TokenName to $TargetPath"
         return
     }
