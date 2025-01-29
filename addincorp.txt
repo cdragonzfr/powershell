@@ -1,0 +1,32 @@
+# Move Files and set ACL
+Import-Csv $FilesCsv | ForEach-Object {
+    $source = $_.SourcePath
+    $destinationDir = ConvertToMappedPath($_.DestinationPath)
+    $destinationFile = Join-Path $destinationDir (Split-Path $source -Leaf)
+
+    # Move file
+    Copy-Item -Path $source -Destination $destinationFile
+
+    # Set ACL
+    $acl = Get-Acl -Path $destinationFile
+    $everyone = New-Object system.security.principal.NTAccount("Everyone")
+    $administrators = New-Object system.security.principal.NTAccount("Administrators")
+    $owner = New-Object system.security.principal.NTAccount($OwnerUser)
+
+    $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "Allow")
+    $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "Allow")
+
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner($owner)
+    $acl.AddAccessRule($everyonePermission)
+    $acl.AddAccessRule($adminPermission)
+    Set-Acl -Path $destinationFile -AclObject $acl
+
+    # Verify and Log
+
+    $currentAcl = Get-Acl -Path $destinationFile
+    $currentOwner = $currentAcl.Owner
+    $currentPermissions = ($currentAcl.Access | Where-Object { $_.IdentityReference -eq "Everyone" -or $_.IdentityReference -eq "BUILTIN\Administrators" } | ForEach-Object { "$($_.IdentityReference): $($_.FileSystemRights)"}) -join "; "
+    $fileName = Split-Path $source -Leaf
+    $logEntry = "File,$fileName,$destinationDir,$destinationFile,$currentOwner,$currentPermissions"
+    Add-Content -Path $LogFile -Value $logEntry
