@@ -55,7 +55,7 @@ Log "Found CSV file: $($CsvFile.Name)"
 Import-Csv -Path $CsvFile.FullName | ForEach-Object {
     $TargetPath = $_.target_path -replace "`r", ""
     $TokenName = $_.token_name -replace "`r", ""
-    $Owner = $_.owner -replace "`r", ""
+    $OwnerUser = $_.owner -replace "`r", ""
     $Permissions = $_.permissions -replace "`r", ""
 
     Log "Processing token: $TokenName"
@@ -67,22 +67,6 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
         return
     }
 
-    # Change owner
-    Log "Setting owner: $Owner for $TokenName"
-    icacls $TokenPath /setowner $Owner /T /C >> $LogFile 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Log "ERROR: Failed to change owner for $TokenName"
-        return
-    }
-
-    # Change permissions
-    Log "Setting permissions: $Permissions for $TokenName"
-    icacls $TokenPath /grant "$Owner:($Permissions)" /T /C >> $LogFile 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Log "ERROR: Failed to change permissions for $TokenName"
-        return
-    }
-
     # Move token to the target path
     Log "Moving $TokenName to $TargetPath"
     if (-not (Test-Path $TargetPath -PathType Container)) {
@@ -90,17 +74,38 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
         New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
     }
 
-    Move-Item -Path $TokenPath -Destination $TargetPath -Force -ErrorAction SilentlyContinue
+    $DestinationFile = Join-Path -Path $TargetPath -ChildPath $TokenName
+    Move-Item -Path $TokenPath -Destination $DestinationFile -Force -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) {
         Log "ERROR: Failed to move $TokenName to $TargetPath"
         return
     }
 
+    # Set Ownership and ACL Permissions
+    Log "Setting owner: $OwnerUser for $TokenName"
+    $acl = Get-Acl -Path $DestinationFile
+    $owner = New-Object system.security.principal.NTAccount($OwnerUser)
+    $everyone = New-Object system.security.principal.NTAccount("Everyone")
+    $administrators = New-Object system.security.principal.NTAccount("Administrators")
+
+    $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "Allow")
+    $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "Allow")
+
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner($owner)
+    $acl.AddAccessRule($everyonePermission)
+    $acl.AddAccessRule($adminPermission)
+    Set-Acl -Path $DestinationFile -AclObject $acl
+
     # Verify token placement
-    $MovedTokenPath = Join-Path -Path $TargetPath -ChildPath $TokenName
-    if (Test-Path $MovedTokenPath -PathType Leaf) {
+    if (Test-Path $DestinationFile -PathType Leaf) {
+        $currentAcl = Get-Acl -Path $DestinationFile
+        $currentOwner = $currentAcl.Owner
+        $currentPermissions = ($currentAcl.Access | Where-Object { $_.IdentityReference -eq "Everyone" -or $_.IdentityReference -eq "BUILTIN\Administrators" } | ForEach-Object { "$($_.IdentityReference): $($_.FileSystemRights)"}) -join "; "
+
         Log "Verification successful: $TokenName is in $TargetPath"
-        icacls $MovedTokenPath >> $LogFile 2>&1
+        Log "Current Owner: $currentOwner"
+        Log "Current Permissions: $currentPermissions"
     } else {
         Log "ERROR: Verification failed for $TokenName"
     }
