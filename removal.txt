@@ -1,0 +1,64 @@
+# Define log file location
+$LogFile = "C:\Temp\token_removal.log"
+"===== Token Removal Script Started: $(Get-Date) =====" | Out-File -FilePath $LogFile -Append
+
+# Function to log messages
+function Log {
+    param ($Message)
+    "$((Get-Date).ToString()) - $Message" | Tee-Object -FilePath $LogFile -Append
+}
+
+# Check PowerShell version (Exit if below 5.0)
+if ($PSVersionTable.PSVersion.Major -lt 5) {
+    Log "ERROR: PowerShell version is below 5.0 (Detected: $($PSVersionTable.PSVersion)). Exiting script."
+    exit 1
+}
+
+Log "PowerShell version is $($PSVersionTable.PSVersion). Proceeding with script."
+
+# Identify CSV file (Must be present from previous placement)
+$CsvFile = Get-ChildItem -Path . -Filter "*.csv" | Select-Object -First 1
+
+if (-not $CsvFile) {
+    Log "ERROR: No CSV file found. Cannot determine token locations."
+    exit 1
+}
+
+Log "Found CSV file: $($CsvFile.Name)"
+
+# Process the CSV file
+Import-Csv -Path $CsvFile.FullName | ForEach-Object {
+    $TargetPath = ($_.target_path -replace "`r", "").Trim()
+    $TokenName = ($_.token_name -replace "`r", "").Trim()
+
+    Log "Processing token: '$TokenName'"
+
+    # Construct full path of token
+    $TokenFullPath = Join-Path -Path $TargetPath -ChildPath $TokenName
+
+    # Check if token exists before attempting removal
+    if (-not (Test-Path $TokenFullPath -PathType Leaf)) {
+        Log "WARNING: Token '$TokenName' not found at '$TargetPath'. Skipping..."
+        return
+    }
+
+    Log "Token '$TokenName' found at '$TargetPath'. Removing..."
+
+    # Attempt to remove the token
+    try {
+        Remove-Item -Path $TokenFullPath -Force -ErrorAction Stop
+        Log "SUCCESS: '$TokenName' removed from '$TargetPath'."
+    } catch {
+        Log "ERROR: Failed to remove '$TokenName' from '$TargetPath'. $_"
+        return
+    }
+
+    # Verify token removal
+    if (-not (Test-Path $TokenFullPath -PathType Leaf)) {
+        Log "Verification successful: '$TokenName' has been removed."
+    } else {
+        Log "ERROR: Verification failed. '$TokenName' still exists in '$TargetPath'."
+    }
+}
+
+Log "===== Token Removal Script Completed: $(Get-Date) ====="
