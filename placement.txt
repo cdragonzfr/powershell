@@ -57,7 +57,6 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
     $TargetPath = $_.target_path -replace "`r", ""
     $TokenName = $_.token_name -replace "`r", ""
     $OwnerUser = $_.owner -replace "`r", ""
-    $Permissions = $_.permissions -replace "`r", ""
 
     Log "Processing token: $TokenName"
 
@@ -91,16 +90,25 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
     $everyone = New-Object system.security.principal.NTAccount("Everyone")
     $administrators = New-Object system.security.principal.NTAccount("Administrators")
 
+    
     $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "Allow")
     $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "Allow")
 
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.SetOwner($owner)
-    $acl.AddAccessRule($everyonePermission)
-    $acl.AddAccessRule($adminPermission)
-    Set-Acl -Path $DestinationFile -AclObject $acl
+    Log "Setting Admin Full Control and Everyone Full Control Permissions for $TokenName"
+    try {
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.SetOwner($owner)
+        $acl.AddAccessRule($everyonePermission)
+        $acl.AddAccessRule($adminPermission)
+        Set-Acl -Path $DestinationFile -AclObject $acl
+        
+    } catch {
+        Log "ERROR: Failed to set Owner and Permissions for $TokenName"
+        return
+    }
 
     # Verify token placement
+    Log "Performing Verification of Current Permissions for $TokenName"
     if (Test-Path $DestinationFile -PathType Leaf) {
         $currentAcl = Get-Acl -Path $DestinationFile
         $currentOwner = $currentAcl.Owner
