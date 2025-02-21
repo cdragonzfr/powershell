@@ -193,11 +193,23 @@ function Ensure-DirectoryExists {
             } else {
                 Log "Directory created: $Path (Inheriting parent folder permissions)"
             }
+
+            # Log current permissions
+            $currentAcl = Get-Acl -Path $Path
+            $currentPermissions = ($currentAcl.Access | ForEach-Object { "$($_.IdentityReference): $($_.FileSystemRights)" }) -join "; "
+            Log "Current Permissions for $Path: $currentPermissions"
+
         } catch {
-            Log "ERROR: Failed to create directory for $Path. $_"
+            Log "ERROR: Failed to create directory or set permissions for $Path. $_"
             exit 1
         }
     } else {
         Log "Directory already exists: $Path (No permission changes applied)"
+
+        # Log existing permissions
+        $currentAcl = Get-Acl -Path $Path
+        $currentPermissions = ($currentAcl.Access | ForEach-Object { "$($_.IdentityReference): $($_.FileSystemRights)" }) -join "; "
+        Log "Existing Permissions for $Path: $currentPermissions"
     }
 }
+
