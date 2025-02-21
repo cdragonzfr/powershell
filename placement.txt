@@ -8,6 +8,40 @@ function Log {
     "$((Get-Date).ToString()) - $Message" | Tee-Object -FilePath $LogFile -Append
 }
 
+# Function to create directory structure and set permissions
+function Ensure-DirectoryExists {
+    param (
+        [string]$Path
+    )
+
+    if (-not (Test-Path -Path $Path -PathType Container)) {
+        Log "Creating directory: $Path"
+        try {
+            New-Item -ItemType Directory -Path $Path -Force | Out-Null
+
+            # Set permissions: FullControl for Everyone and Administrators
+            $acl = Get-Acl -Path $Path
+            $everyone = New-Object system.security.principal.NTAccount("Everyone")
+            $administrators = New-Object system.security.principal.NTAccount("Administrators")
+
+            $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+            $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+
+            $acl.SetAccessRuleProtection($true, $false)
+            $acl.AddAccessRule($everyonePermission)
+            $acl.AddAccessRule($adminPermission)
+
+            Set-Acl -Path $Path -AclObject $acl
+            Log "Permissions set: Everyone and Administrators have Full Control on $Path"
+        } catch {
+            Log "ERROR: Failed to create directory or set permissions for $Path. $_"
+            exit 1
+        }
+    } else {
+        Log "Directory already exists: $Path"
+    }
+}
+
 # Check PowerShell version (Exit if below 5.0)
 if ($PSVersionTable.PSVersion.Major -lt 5) {
     Log "ERROR: PowerShell version is below 5.0 (Detected: $($PSVersionTable.PSVersion)). Exiting script."
@@ -27,7 +61,7 @@ if (-not $ZipFile) {
 Log "Found zip file: $($ZipFile.Name)"
 
 # Extract the zip file
-$ExtractPath = Join-Path -Path (Get-Location) -ChildPath .
+$ExtractPath = Join-Path -Path (Get-Location) -ChildPath "ExtractedContents"
 if (!(Test-Path $ExtractPath)) {
     New-Item -ItemType Directory -Path $ExtractPath | Out-Null
 }
@@ -54,13 +88,16 @@ Log "Found CSV file: $($CsvFile.Name)"
 
 # Process the CSV file
 Import-Csv -Path $CsvFile.FullName | ForEach-Object {
-    $TargetPath = $_.target_path -replace "`r", ""
-    $TokenName = $_.token_name -replace "`r", ""
-    $OwnerUser = $_.owner -replace "`r", ""
+    $TargetPath = ($_.target_path -replace "`r", "").Trim()
+    $TokenName = ($_.token_name -replace "`r", "").Trim()
+    $OwnerUser = ($_.owner -replace "`r", "").Trim()
 
     Log "Processing token: $TokenName"
 
-    # Check if token exists
+    # Ensure target directory exists (recursively create it if necessary)
+    Ensure-DirectoryExists -Path $TargetPath
+
+    # Check if token exists in extracted folder
     $TokenPath = Join-Path -Path $ExtractPath -ChildPath $TokenName
     if (-not (Test-Path $TokenPath -PathType Leaf)) {
         Log "ERROR: Token $TokenName not found in extracted directory."
@@ -68,47 +105,38 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
     }
 
     # Move token to the target path
-    Log "Moving $TokenName to $TargetPath"
-    if (-not (Test-Path $TargetPath -PathType Container)) {
-        Log "Creating directory: $TargetPath"
-        New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
-    }
-
     $DestinationFile = Join-Path -Path $TargetPath -ChildPath $TokenName
     try {
-        Move-Item -Path $TokenPath -Destination $DestinationFile -Force -ErrorAction SilentlyContinue
-        Log "Move Successful"
+        Move-Item -Path $TokenPath -Destination $DestinationFile -Force -ErrorAction Stop
+        Log "Move Successful: $TokenName -> $TargetPath"
     } catch {
-        Log "ERROR: Failed to move $TokenName to $TargetPath"
+        Log "ERROR: Failed to move $TokenName to $TargetPath. $_"
         return
     }
 
     # Set Ownership and ACL Permissions
     Log "Setting owner: $OwnerUser for $TokenName"
-    $acl = Get-Acl -Path $DestinationFile
-    $owner = New-Object system.security.principal.NTAccount($OwnerUser)
-    $everyone = New-Object system.security.principal.NTAccount("Everyone")
-    $administrators = New-Object system.security.principal.NTAccount("Administrators")
-
-    
-    $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "Allow")
-    $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "Allow")
-
-    Log "Setting Admin Full Control and Everyone Full Control Permissions for $TokenName"
     try {
+        $acl = Get-Acl -Path $DestinationFile
+        $owner = New-Object system.security.principal.NTAccount($OwnerUser)
+        $everyone = New-Object system.security.principal.NTAccount("Everyone")
+        $administrators = New-Object system.security.principal.NTAccount("Administrators")
+
+        $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "Allow")
+        $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "Allow")
+
         $acl.SetAccessRuleProtection($true, $false)
         $acl.SetOwner($owner)
         $acl.AddAccessRule($everyonePermission)
         $acl.AddAccessRule($adminPermission)
         Set-Acl -Path $DestinationFile -AclObject $acl
-        
+        Log "Permissions set: $TokenName has Everyone and Administrators Full Control"
     } catch {
-        Log "ERROR: Failed to set Owner and Permissions for $TokenName"
+        Log "ERROR: Failed to set owner and permissions for $TokenName. $_"
         return
     }
 
     # Verify token placement
-    Log "Performing Verification of Current Permissions for $TokenName"
     if (Test-Path $DestinationFile -PathType Leaf) {
         $currentAcl = Get-Acl -Path $DestinationFile
         $currentOwner = $currentAcl.Owner
@@ -123,3 +151,53 @@ Import-Csv -Path $CsvFile.FullName | ForEach-Object {
 }
 
 Log "===== Script Completed: $(Get-Date) ====="
+
+
+
+
+function Ensure-DirectoryExists {
+    param (
+        [string]$Path
+    )
+
+    if (-not (Test-Path -Path $Path -PathType Container)) {
+        Log "Creating directory: $Path"
+        try {
+            # Create the directory (including missing subfolders)
+            New-Item -ItemType Directory -Path $Path -Force | Out-Null
+
+            # Check if the directory is at the root of the drive (e.g., E:\NewFolder)
+            $Drive, $SubPath = $Path -split ":\", 2
+            $IsRootDirectory = -not $SubPath.Contains("\") # If there's no backslash, it's a root directory
+
+            if ($IsRootDirectory) {
+                Log "Setting permissions for root-level directory: $Path"
+
+                # Get current ACL
+                $acl = Get-Acl -Path $Path
+                $everyone = New-Object system.security.principal.NTAccount("Everyone")
+                $administrators = New-Object system.security.principal.NTAccount("Administrators")
+
+                $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule(
+                    $everyone, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"
+                )
+                $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule(
+                    $administrators, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"
+                )
+
+                $acl.AddAccessRule($everyonePermission)
+                $acl.AddAccessRule($adminPermission)
+
+                Set-Acl -Path $Path -AclObject $acl
+                Log "Permissions set: Everyone and Administrators have Full Control on root directory: $Path"
+            } else {
+                Log "Directory created: $Path (Inheriting parent folder permissions)"
+            }
+        } catch {
+            Log "ERROR: Failed to create directory for $Path. $_"
+            exit 1
+        }
+    } else {
+        Log "Directory already exists: $Path (No permission changes applied)"
+    }
+}
