@@ -1,0 +1,67 @@
+# Process the CSV file with foreach
+$csvData = Import-Csv -Path $CsvFile.FullName
+
+foreach ($row in $csvData) {
+    $TargetPath = ($row.target_path -replace "`r", "").Trim()
+    $TokenName = ($row.token_name -replace "`r", "").Trim()
+    $OwnerUser = ($row.owner -replace "`r", "").Trim()
+
+    Log "Processing token: $TokenName"
+
+    # Ensure target directory exists (recursively create it if necessary)
+    Ensure-DirectoryExists -Path $TargetPath
+
+    # Check if token exists in extracted folder
+    $TokenPath = Join-Path -Path $ExtractPath -ChildPath $TokenName
+    if (-not (Test-Path $TokenPath -PathType Leaf)) {
+        Log "ERROR: Token $TokenName not found in extracted directory."
+        continue  # Skip this row and move to the next
+    }
+
+    # Move token to the target path
+    $DestinationFile = Join-Path -Path $TargetPath -ChildPath $TokenName
+    try {
+        Move-Item -Path $TokenPath -Destination $DestinationFile -Force -ErrorAction Stop
+        Log "Move Successful: $TokenName -> $TargetPath"
+    } catch {
+        Log "ERROR: Failed to move $TokenName to $TargetPath. $_"
+        continue  # Skip further processing for this row
+    }
+
+    # Set Ownership and ACL Permissions
+    Log "Setting owner: $OwnerUser for $TokenName"
+    try {
+        $acl = Get-Acl -Path $DestinationFile
+        $owner = New-Object system.security.principal.NTAccount($OwnerUser)
+        $everyone = New-Object system.security.principal.NTAccount("Everyone")
+        $administrators = New-Object system.security.principal.NTAccount("Administrators")
+
+        $everyonePermission = New-Object system.security.accesscontrol.filesystemaccessrule($everyone, "FullControl", "Allow")
+        $adminPermission = New-Object system.security.accesscontrol.filesystemaccessrule($administrators, "FullControl", "Allow")
+
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.SetOwner($owner)
+        $acl.AddAccessRule($everyonePermission)
+        $acl.AddAccessRule($adminPermission)
+        Set-Acl -Path $DestinationFile -AclObject $acl
+        Log "Permissions set: $TokenName has Everyone and Administrators Full Control"
+    } catch {
+        Log "ERROR: Failed to set owner and permissions for $TokenName. $_"
+        continue  # Skip to the next row
+    }
+
+    # Verify token placement
+    if (Test-Path $DestinationFile -PathType Leaf) {
+        $currentAcl = Get-Acl -Path $DestinationFile
+        $currentOwner = $currentAcl.Owner
+        $currentPermissions = ($currentAcl.Access | Where-Object { $_.IdentityReference -eq "Everyone" -or $_.IdentityReference -eq "BUILTIN\Administrators" } | ForEach-Object { "$($_.IdentityReference): $($_.FileSystemRights)"}) -join "; "
+
+        Log "Verification successful: $TokenName is in $TargetPath"
+        Log "Current Owner: $currentOwner"
+        Log "Current Permissions: $currentPermissions"
+    } else {
+        Log "ERROR: Verification failed for $TokenName"
+    }
+}
+
+Log "===== Script Completed: $(Get-Date) ====="
