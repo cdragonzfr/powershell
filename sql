@@ -27,23 +27,29 @@ function Write-Log {
 Write-Log "===== Script started ====="
 
 # =========================
-# GET LAST CHECKPOINT
+# GET OR INIT CHECKPOINT (SINGLE ROW)
 # =========================
 $queryCheckpoint = @"
 IF OBJECT_ID('dbo.SplunkAuditCheckpoint', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.SplunkAuditCheckpoint (
-        id INT IDENTITY(1,1) PRIMARY KEY,
+        id INT PRIMARY KEY,
         last_event_time DATETIME2
     );
 
-    INSERT INTO dbo.SplunkAuditCheckpoint (last_event_time)
-    VALUES ('2000-01-01');
+    INSERT INTO dbo.SplunkAuditCheckpoint (id, last_event_time)
+    VALUES (1, '2000-01-01');
 END
 
-SELECT TOP 1 last_event_time
+IF NOT EXISTS (SELECT 1 FROM dbo.SplunkAuditCheckpoint WHERE id = 1)
+BEGIN
+    INSERT INTO dbo.SplunkAuditCheckpoint (id, last_event_time)
+    VALUES (1, '2000-01-01');
+END
+
+SELECT last_event_time
 FROM dbo.SplunkAuditCheckpoint
-ORDER BY id DESC;
+WHERE id = 1;
 "@
 
 try {
@@ -133,11 +139,12 @@ foreach ($row in $auditData) {
 Write-Log "Finished writing JSON files."
 
 # =========================
-# UPDATE CHECKPOINT
+# UPDATE CHECKPOINT (SINGLE ROW UPDATE)
 # =========================
 $updateCheckpoint = @"
-INSERT INTO dbo.SplunkAuditCheckpoint (last_event_time)
-VALUES ('$maxEventTime');
+UPDATE dbo.SplunkAuditCheckpoint
+SET last_event_time = '$maxEventTime'
+WHERE id = 1;
 "@
 
 try {
